@@ -102,9 +102,11 @@ class Portfolio:
         if position.quantity < quantity:
             return False
         
-        position.quantity -= quantity
-        if position.quantity == 0:
+        new_quantity = position.quantity - quantity
+        if new_quantity == 0:
             del self.positions[symbol]
+        else:
+            self.positions[symbol] = Position(symbol, new_quantity, position.average_price)
         
         return True
     

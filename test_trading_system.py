@@ -57,7 +57,7 @@ def test_remove_position():
     portfolio.add_position("AAPL", 10, Decimal("150.00"))
     
     success = portfolio.remove_position("AAPL", 5)
-    assert success == True
+    assert success
     
     position = portfolio.get_position("AAPL")
     assert position.quantity == 5
