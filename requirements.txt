@@ -1,0 +1,2 @@
+# Trading System Requirements
+# No external dependencies required - uses Python standard library only
