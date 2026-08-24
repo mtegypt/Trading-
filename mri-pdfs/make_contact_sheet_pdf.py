@@ -3,22 +3,32 @@
 
 Original JPEG bytes are embedded verbatim as /DCTDecode image XObjects, so
 pixel data is bit-identical to the source files.
+
+Page width is A3 (297 mm); page height is cropped to the image grid so no
+white margin is left over. Images are scaled to fill their cell.
 """
 import os
 import re
 import sys
 from PIL import Image
 import pikepdf
-from pikepdf import Name, Dictionary, Array, String
+from pikepdf import Name, Dictionary, Array
 
-# A4 portrait, points
-PW, PH = 595.276, 841.890
-MARGIN = 11.0
-GUTTER = 4.0
+MM = 72.0 / 25.4
+PW = 297.0 * MM          # A3 width (841.89 pt); height is derived from content
+MARGIN = 4.0
+GUTTER = 3.0
 LABEL_H = 9.0
 LABEL_SIZE = 6.0
 COLS, ROWS = 3, 3
 PER_PAGE = COLS * ROWS
+
+# Square cells: the studies are dominated by square images, so a square cell
+# gives the tightest crop while still fitting portrait slices without distortion.
+CELL_W = (PW - 2 * MARGIN - (COLS - 1) * GUTTER) / COLS
+CELL_H = CELL_W
+ROW_H = CELL_H + LABEL_H
+PH = 2 * MARGIN + ROWS * ROW_H + (ROWS - 1) * GUTTER
 
 
 def natural_key(path):
@@ -43,18 +53,18 @@ def make_xobject(pdf, path):
         w, h = im.size
         mode = im.mode
     if mode in ('L', '1'):
-        cs, bpc = Name.DeviceGray, 8
+        cs = Name.DeviceGray
     elif mode == 'CMYK':
-        cs, bpc = Name.DeviceCMYK, 8
+        cs = Name.DeviceCMYK
     else:
-        cs, bpc = Name.DeviceRGB, 8
+        cs = Name.DeviceRGB
     xobj = pikepdf.Stream(pdf, raw)
     xobj.Type = Name.XObject
     xobj.Subtype = Name.Image
     xobj.Width = w
     xobj.Height = h
     xobj.ColorSpace = cs
-    xobj.BitsPerComponent = bpc
+    xobj.BitsPerComponent = 8
     xobj.Filter = Name.DCTDecode
     return xobj, w, h
 
@@ -73,57 +83,38 @@ def build(folder, out_path, label=True):
         Type=Name.Font, Subtype=Name.Type1,
         BaseFont=Name.Helvetica, Encoding=Name.WinAnsiEncoding))
 
-    usable_w = PW - 2 * MARGIN
-    usable_h = PH - 2 * MARGIN
-    cell_w = (usable_w - (COLS - 1) * GUTTER) / COLS
-    cell_h = (usable_h - (ROWS - 1) * GUTTER) / ROWS
-    slot_h = cell_h - (LABEL_H if label else 0)
-
     for start in range(0, len(files), PER_PAGE):
         chunk = files[start:start + PER_PAGE]
-        placed = []          # (xobj_name, xobj, draw_w, draw_h, caption)
         resources = Dictionary()
+        ops = []
         for idx, path in enumerate(chunk):
             xobj, w, h = make_xobject(pdf, path)
-            scale = min(cell_w / w, slot_h / h)
             resources[f'/Im{idx}'] = pdf.make_indirect(xobj)
-            placed.append((f'/Im{idx}', w * scale, h * scale,
-                           os.path.splitext(os.path.basename(path))[0]))
 
-        # row heights from the tallest drawn image in each row -> tight grid
-        row_h = []
-        for r in range(ROWS):
-            row = placed[r * COLS:(r + 1) * COLS]
-            if not row:
-                break
-            row_h.append(max(p[2] for p in row) + (LABEL_H if label else 0))
-        block_h = sum(row_h) + (len(row_h) - 1) * GUTTER
-        top_y = MARGIN + usable_h - (usable_h - block_h) / 2
+            scale = min(CELL_W / w, CELL_H / h)
+            dw, dh = w * scale, h * scale
 
-        ops = []
-        y_cursor = top_y
-        for r, rh in enumerate(row_h):
-            row = placed[r * COLS:(r + 1) * COLS]
-            for c, (nm, dw, dh, cap) in enumerate(row):
-                cell_x = MARGIN + c * (cell_w + GUTTER)
-                x = cell_x + (cell_w - dw) / 2
-                y = y_cursor - (LABEL_H if label else 0) - dh
-                ops.append(f'q {dw:.3f} 0 0 {dh:.3f} {x:.3f} {y:.3f} cm {nm} Do Q')
-                if label:
-                    ty = y - LABEL_H + 2.0
-                    tw = len(cap) * LABEL_SIZE * 0.5   # Helvetica avg width
-                    tx = cell_x + max(0.0, (cell_w - tw) / 2)
-                    ops.append(
-                        f'q BT /F1 {LABEL_SIZE} Tf 0.35 0.35 0.35 rg '
-                        f'{tx:.3f} {ty:.3f} Td ({esc(cap)}) Tj ET Q')
-            y_cursor -= rh + GUTTER
+            r, c = divmod(idx, COLS)
+            cell_x = MARGIN + c * (CELL_W + GUTTER)
+            cell_top = PH - MARGIN - r * (ROW_H + GUTTER)
+            x = cell_x + (CELL_W - dw) / 2
+            y = cell_top - CELL_H + (CELL_H - dh) / 2
+            ops.append(f'q {dw:.3f} 0 0 {dh:.3f} {x:.3f} {y:.3f} cm /Im{idx} Do Q')
+
+            if label:
+                cap = os.path.splitext(os.path.basename(path))[0]
+                tw = len(cap) * LABEL_SIZE * 0.5      # Helvetica average width
+                tx = cell_x + max(0.0, (CELL_W - tw) / 2)
+                ty = cell_top - CELL_H - LABEL_H + 2.5
+                ops.append(
+                    f'q BT /F1 {LABEL_SIZE} Tf 0.35 0.35 0.35 rg '
+                    f'{tx:.3f} {ty:.3f} Td ({esc(cap)}) Tj ET Q')
 
         content = pikepdf.Stream(pdf, '\n'.join(ops).encode('ascii'))
         page_dict = Dictionary(
             Type=Name.Page,
             MediaBox=Array([0, 0, PW, PH]),
-            Resources=Dictionary(XObject=resources,
-                                 Font=Dictionary(F1=font)),
+            Resources=Dictionary(XObject=resources, Font=Dictionary(F1=font)),
             Contents=pdf.make_indirect(content))
         pdf.pages.append(pikepdf.Page(pdf.make_indirect(page_dict)))
 
@@ -136,4 +127,5 @@ def build(folder, out_path, label=True):
 if __name__ == '__main__':
     src, dst = sys.argv[1], sys.argv[2]
     n_img, n_pg = build(src, dst)
-    print(f'{dst}: {n_img} images -> {n_pg} pages')
+    print(f'{dst}: {n_img} images -> {n_pg} pages, page {PW:.1f} x {PH:.1f} pt, '
+          f'cell {CELL_W:.1f} pt')

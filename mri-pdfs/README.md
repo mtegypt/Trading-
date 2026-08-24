@@ -16,11 +16,15 @@ images at full original resolution; on-page size only affects display scale.
 
 ## Layout
 
-- A4 portrait, 3 x 3 grid, images ordered by series then instance number
+- Page is 841.9 x 868.9 pt: A3 width (297 mm) with the height cropped to the
+  image grid, so there is no white margin around or between the rows.
+- 3 x 3 grid, images ordered by series then instance number
   (`IMG-<series>-<instance>`).
-- Aspect ratio preserved per image; each row is sized to its tallest image and
-  the grid is centred on the page.
+- Each cell is 276 pt (9.7 cm) square. Aspect ratio is preserved per image and
+  never cropped, so portrait slices are height-limited within their cell.
 - Each image is captioned with its source filename for cross-reference.
+- Printed on A3 paper at "fit to page", the images come out at their maximum
+  possible size for a 9-up sheet.
 
 ## Regenerating
 
